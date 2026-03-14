@@ -291,6 +291,7 @@ function buildLocalEnv(
     'ANTHROPIC_SMALL_FAST_MODEL',
   ];
   const bedrockVars = readEnvFile(bedrockVarNames);
+  const { OLLAMA_HOST } = readEnvFile(['OLLAMA_HOST']);
   const useBedrock = bedrockVars.CLAUDE_CODE_USE_BEDROCK === '1';
 
   // Ensure node binary directory is in PATH so the SDK can spawn `node` for claude cli.js
@@ -309,6 +310,8 @@ function buildLocalEnv(
     NANOCLAW_GLOBAL_DIR: globalDir,
     // Per-group isolated .claude/ directory
     HOME: path.dirname(claudeDir),
+    // Ollama host for local MCP server
+    ...(OLLAMA_HOST && { OLLAMA_HOST }),
   };
 
   if (useBedrock) {
@@ -467,7 +470,12 @@ export async function runContainerAgent(
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
+        if (!line) continue;
+        if (line.includes('[OLLAMA]')) {
+          logger.info({ container: group.folder }, line);
+        } else {
+          logger.debug({ container: group.folder }, line);
+        }
       }
       // Don't reset timeout on stderr — SDK writes debug logs continuously.
       // Timeout only resets on actual output (OUTPUT_MARKER in stdout).
