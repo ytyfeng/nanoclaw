@@ -1,6 +1,8 @@
 import { App, LogLevel } from '@slack/bolt';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
 
+import { execFileSync } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 
 import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.js';
@@ -116,7 +118,15 @@ export class SlackChannel implements Channel {
       // Download and process any image file attachments
       let imagePrefix = '';
       if (!isBotMessage) {
-        const files = (event as { files?: Array<{ mimetype?: string; url_private?: string; name?: string }> }).files;
+        const files = (
+          event as {
+            files?: Array<{
+              mimetype?: string;
+              url_private?: string;
+              name?: string;
+            }>;
+          }
+        ).files;
         if (files) {
           const group = this.opts.registeredGroups()[jid];
           if (group) {
@@ -139,6 +149,28 @@ export class SlackChannel implements Channel {
                     'Failed to process Slack image attachment',
                   );
                   imagePrefix += '[Image - processing failed] ';
+                }
+              } else if (file.mimetype === 'application/pdf' && file.url_private) {
+                try {
+                  const buffer = await this.downloadFile(file.url_private);
+                  const groupDir = path.join(GROUPS_DIR, group.folder);
+                  const attachmentsDir = path.join(groupDir, 'attachments');
+                  fs.mkdirSync(attachmentsDir, { recursive: true });
+                  const filename = file.name || `doc-${Date.now()}.pdf`;
+                  const pdfPath = path.join(attachmentsDir, filename);
+                  fs.writeFileSync(pdfPath, buffer);
+                  try {
+                    const text = execFileSync('pdftotext', [pdfPath, '-'], { encoding: 'utf-8', timeout: 30000 });
+                    const truncated = text.length > 8000 ? text.slice(0, 8000) + '\n[...truncated]' : text;
+                    imagePrefix += `[PDF: ${filename}]\n${truncated}\n`;
+                    logger.info({ jid, file: filename }, 'Extracted Slack PDF attachment');
+                  } catch (pdfErr) {
+                    imagePrefix += `[PDF: ${filename} - text extraction failed]\n`;
+                    logger.warn({ jid, err: pdfErr }, 'Failed to extract PDF text');
+                  }
+                } catch (err) {
+                  logger.warn({ jid, err }, 'Failed to download Slack PDF attachment');
+                  imagePrefix += '[PDF - download failed] ';
                 }
               }
             }
