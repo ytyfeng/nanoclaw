@@ -7,6 +7,13 @@ import fs from 'fs';
 import os from 'os';
 
 import { logger } from './logger.js';
+import { readEnvFile } from './env.js';
+
+function isLocalRunner(): boolean {
+  if (process.env.LOCAL_RUNNER === 'true') return true;
+  const env = readEnvFile(['LOCAL_RUNNER']);
+  return env.LOCAL_RUNNER === 'true';
+}
 
 /** The container runtime binary name. */
 export const CONTAINER_RUNTIME_BIN = 'docker';
@@ -64,6 +71,10 @@ export function stopContainer(name: string): string {
 
 /** Ensure the container runtime is running, starting it if needed. */
 export function ensureContainerRuntimeRunning(): void {
+  if (isLocalRunner()) {
+    logger.info('Local runner mode: skipping container runtime check');
+    return;
+  }
   try {
     execSync(`${CONTAINER_RUNTIME_BIN} info`, {
       stdio: 'pipe',
@@ -102,6 +113,7 @@ export function ensureContainerRuntimeRunning(): void {
 
 /** Kill orphaned NanoClaw containers from previous runs. */
 export function cleanupOrphans(): void {
+  if (isLocalRunner()) return;
   try {
     const output = execSync(
       `${CONTAINER_RUNTIME_BIN} ps --filter name=nanoclaw- --format '{{.Names}}'`,

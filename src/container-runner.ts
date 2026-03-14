@@ -2,7 +2,12 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import {
+  ChildProcess,
+  ChildProcessWithoutNullStreams,
+  exec,
+  spawn,
+} from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -26,6 +31,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -264,6 +270,65 @@ function buildContainerArgs(
   return args;
 }
 
+function buildLocalEnv(
+  group: RegisteredGroup,
+  mounts: VolumeMount[],
+): NodeJS.ProcessEnv {
+  const findMount = (containerPath: string) =>
+    mounts.find((m) => m.containerPath === containerPath)?.hostPath;
+
+  const groupDir = findMount('/workspace/group') ?? '';
+  const ipcDir = findMount('/workspace/ipc') ?? '';
+  const globalDir = findMount('/workspace/global') ?? '';
+  const claudeDir = findMount('/home/node/.claude') ?? '';
+
+  const bedrockVarNames = [
+    'CLAUDE_CODE_USE_BEDROCK',
+    'AWS_REGION',
+    'AWS_BEARER_TOKEN_BEDROCK',
+    'ANTHROPIC_MODEL',
+    'ANTHROPIC_SMALL_FAST_MODEL',
+  ];
+  const bedrockVars = readEnvFile(bedrockVarNames);
+  const useBedrock = bedrockVars.CLAUDE_CODE_USE_BEDROCK === '1';
+
+  // Ensure node binary directory is in PATH so the SDK can spawn `node` for claude cli.js
+  const nodeBinDir = path.dirname(process.execPath);
+  const currentPath = process.env.PATH || '';
+  const pathWithNode = currentPath.includes(nodeBinDir)
+    ? currentPath
+    : `${nodeBinDir}:${currentPath}`;
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: pathWithNode,
+    TZ: TIMEZONE,
+    NANOCLAW_GROUP_DIR: groupDir,
+    NANOCLAW_IPC_INPUT_DIR: path.join(ipcDir, 'input'),
+    NANOCLAW_GLOBAL_DIR: globalDir,
+    // Per-group isolated .claude/ directory
+    HOME: path.dirname(claudeDir),
+  };
+
+  if (useBedrock) {
+    // Bedrock auth: pass vars directly, no credential proxy needed
+    for (const [k, v] of Object.entries(bedrockVars)) {
+      env[k] = v;
+    }
+  } else {
+    // Standard auth: route through the credential proxy on localhost
+    env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${CREDENTIAL_PROXY_PORT}`;
+    const authMode = detectAuthMode();
+    if (authMode === 'api-key') {
+      env.ANTHROPIC_API_KEY = 'placeholder';
+    } else {
+      env.CLAUDE_CODE_OAUTH_TOKEN = 'placeholder';
+    }
+  }
+
+  return env;
+}
+
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
@@ -307,9 +372,26 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    let container: ChildProcessWithoutNullStreams;
+    const localRunner = readEnvFile(['LOCAL_RUNNER']).LOCAL_RUNNER === 'true' || process.env.LOCAL_RUNNER === 'true';
+    if (localRunner) {
+      const agentRunnerEntry = path.join(
+        process.cwd(),
+        'container',
+        'agent-runner',
+        'dist',
+        'index.js',
+      );
+      const localEnv = buildLocalEnv(group, mounts);
+      container = spawn(process.execPath, [agentRunnerEntry], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: localEnv,
+      });
+    } else {
+      container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    }
 
     onProcess(container, containerName);
 
