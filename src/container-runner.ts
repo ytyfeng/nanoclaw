@@ -47,6 +47,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  imageAttachments?: Array<{ relativePath: string; mediaType: string }>;
 }
 
 export interface ContainerOutput {
@@ -373,7 +374,9 @@ export async function runContainerAgent(
 
   return new Promise((resolve) => {
     let container: ChildProcessWithoutNullStreams;
-    const localRunner = readEnvFile(['LOCAL_RUNNER']).LOCAL_RUNNER === 'true' || process.env.LOCAL_RUNNER === 'true';
+    const localRunner =
+      readEnvFile(['LOCAL_RUNNER']).LOCAL_RUNNER === 'true' ||
+      process.env.LOCAL_RUNNER === 'true';
     if (localRunner) {
       const agentRunnerEntry = path.join(
         process.cwd(),
