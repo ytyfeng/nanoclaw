@@ -8,7 +8,7 @@ allowed-tools: Bash
 
 Powered by [AutoResearchClaw](https://github.com/aiming-lab/AutoResearchClaw): 23-stage pipeline that turns a topic into a complete academic paper (5,000–6,500 words) with literature review, experiments, and verified citations. Uses local Ollama models — no external API keys required.
 
-**Estimated time:** 30–60 minutes depending on topic complexity.
+**Estimated time:** Several hours to a full day depending on topic complexity.
 
 ## Quick start
 
@@ -81,7 +81,7 @@ llm:
 
 experiment:
   mode: "sandbox"
-  time_budget_minutes: 60
+  time_budget_minutes: 1440
   hardware_requirements: cpu
   max_repair_rounds: 10
 
@@ -175,7 +175,7 @@ llm:
     - "qwen3.5:latest"
 experiment:
   mode: "sandbox"
-  time_budget_minutes: 60
+  time_budget_minutes: 1440
   hardware_requirements: cpu
   max_repair_rounds: 10
 security:
@@ -203,10 +203,10 @@ fi
 
 ## Sending progress updates
 
-Since this runs for 30–60 minutes, send the user an acknowledgment first:
+Since this can run for several hours, send the user an acknowledgment first:
 
 ```
-mcp__nanoclaw__send_message with content: "Starting research pipeline on '[topic]'. This will take 30–60 minutes. I'll send you the paper when it's done."
+mcp__nanoclaw__send_message with content: "Starting research pipeline on '[topic]'. This may take several hours — I'll send you the paper when it's done."
 ```
 
 Then run the pipeline, and when complete, send the paper via `mcp__nanoclaw__send_message`.
