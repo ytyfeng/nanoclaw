@@ -39,14 +39,37 @@ project:
   mode: "full-auto"
 
 research:
-  domains: [machine-learning, computer-science]
+  domains:
+    - machine-learning
+    - computer-science
+    - human-computer-interaction
+    - computing-education
+    - systems
+    - databases
+    - programming-languages
+    - computer-vision
+    - natural-language-processing
   daily_paper_count: 10
   quality_threshold: 3.5
+  target_venues:
+    - NeurIPS
+    - ICML
+    - ICLR
+    - CHI
+    - SIGCSE
+    - UIST
+    - CSCW
+    - VLDB
+    - SIGMOD
+    - SOSP
+    - OSDI
+    - PLDI
+    - ASPLOS
 
 runtime:
   timezone: "America/Los_Angeles"
   max_parallel_tasks: 2
-  retry_attempts: 2
+  retry_attempts: 3
 
 llm:
   provider: "openai-compatible"
@@ -57,9 +80,10 @@ llm:
     - "qwen3.5:latest"
 
 experiment:
-  mode: "simulated"
-  time_budget_minutes: 30
+  mode: "sandbox"
+  time_budget_minutes: 60
   hardware_requirements: cpu
+  max_repair_rounds: 10
 
 security:
   hitl_stages: []
@@ -112,13 +136,36 @@ project:
   name: "research"
   mode: "full-auto"
 research:
-  domains: [machine-learning, computer-science]
+  domains:
+    - machine-learning
+    - computer-science
+    - human-computer-interaction
+    - computing-education
+    - systems
+    - databases
+    - programming-languages
+    - computer-vision
+    - natural-language-processing
   daily_paper_count: 10
   quality_threshold: 3.5
+  target_venues:
+    - NeurIPS
+    - ICML
+    - ICLR
+    - CHI
+    - SIGCSE
+    - UIST
+    - CSCW
+    - VLDB
+    - SIGMOD
+    - SOSP
+    - OSDI
+    - PLDI
+    - ASPLOS
 runtime:
   timezone: "America/Los_Angeles"
   max_parallel_tasks: 2
-  retry_attempts: 2
+  retry_attempts: 3
 llm:
   provider: "openai-compatible"
   base_url: "http://host.docker.internal:11434/v1"
@@ -127,9 +174,10 @@ llm:
   fallback_models:
     - "qwen3.5:latest"
 experiment:
-  mode: "simulated"
-  time_budget_minutes: 30
+  mode: "sandbox"
+  time_budget_minutes: 60
   hardware_requirements: cpu
+  max_repair_rounds: 10
 security:
   hitl_stages: []
   auto_approve: true
