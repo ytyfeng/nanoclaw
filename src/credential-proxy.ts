@@ -32,6 +32,7 @@ export function startCredentialProxy(
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
+    'LITELLM_BASE_URL',
   ]);
 
   const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
@@ -44,16 +45,47 @@ export function startCredentialProxy(
   const isHttps = upstreamUrl.protocol === 'https:';
   const makeRequest = isHttps ? httpsRequest : httpRequest;
 
+  const litellmUrl = secrets.LITELLM_BASE_URL
+    ? new URL(secrets.LITELLM_BASE_URL)
+    : null;
+
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
         const body = Buffer.concat(chunks);
+
+        // Route to LiteLLM when a non-Claude model is requested and LiteLLM is configured.
+        // LiteLLM bridges the Anthropic Messages API format to Ollama, so the container
+        // never needs to know which backend is serving the request.
+        let routeToLitellm = false;
+        if (litellmUrl && req.url === '/v1/messages') {
+          try {
+            const model = (JSON.parse(body.toString()) as { model?: string })
+              .model;
+            if (
+              model &&
+              !model.startsWith('claude') &&
+              !model.startsWith('us.anthropic.') &&
+              !model.startsWith('eu.anthropic.') &&
+              !model.startsWith('ap.anthropic.')
+            ) {
+              routeToLitellm = true;
+            }
+          } catch {
+            /* not JSON — forward normally */
+          }
+        }
+
+        const target = routeToLitellm ? litellmUrl! : upstreamUrl;
+        const targetIsHttps = target.protocol === 'https:';
+        const targetRequest = targetIsHttps ? httpsRequest : httpRequest;
+
         const headers: Record<string, string | number | string[] | undefined> =
           {
             ...(req.headers as Record<string, string>),
-            host: upstreamUrl.host,
+            host: target.host,
             'content-length': body.length,
           };
 
@@ -62,7 +94,12 @@ export function startCredentialProxy(
         delete headers['keep-alive'];
         delete headers['transfer-encoding'];
 
-        if (authMode === 'api-key') {
+        if (routeToLitellm) {
+          // LiteLLM accepts any non-empty key; no real credentials needed
+          delete headers['x-api-key'];
+          delete headers['authorization'];
+          headers['x-api-key'] = 'sk-litellm';
+        } else if (authMode === 'api-key') {
           // API key mode: inject x-api-key on every request
           delete headers['x-api-key'];
           headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
@@ -79,10 +116,10 @@ export function startCredentialProxy(
           }
         }
 
-        const upstream = makeRequest(
+        const upstream = targetRequest(
           {
-            hostname: upstreamUrl.hostname,
-            port: upstreamUrl.port || (isHttps ? 443 : 80),
+            hostname: target.hostname,
+            port: target.port || (targetIsHttps ? 443 : 80),
             path: req.url,
             method: req.method,
             headers,
@@ -95,7 +132,7 @@ export function startCredentialProxy(
 
         upstream.on('error', (err) => {
           logger.error(
-            { err, url: req.url },
+            { err, url: req.url, litellm: routeToLitellm },
             'Credential proxy upstream error',
           );
           if (!res.headersSent) {

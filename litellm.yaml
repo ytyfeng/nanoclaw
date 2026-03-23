@@ -1,0 +1,31 @@
+model_list:
+  - model_name: "qwen3.5"
+    litellm_params:
+      model: "ollama/qwen3.5"
+      api_base: "http://localhost:11434"
+  - model_name: "qwen3.5:latest"
+    litellm_params:
+      model: "ollama/qwen3.5:latest"
+      api_base: "http://localhost:11434"
+  - model_name: "glm-4.7-flash"
+    litellm_params:
+      model: "ollama/glm-4.7-flash"
+      api_base: "http://localhost:11434"
+  - model_name: "glm-4.7-flash:latest"
+    litellm_params:
+      model: "ollama/glm-4.7-flash:latest"
+      api_base: "http://localhost:11434"
+  - model_name: "gemma3:1b"
+    litellm_params:
+      model: "ollama/gemma3:1b"
+      api_base: "http://localhost:11434"
+  - model_name: "kwangsuklee/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-GGUF:latest"
+    litellm_params:
+      model: "ollama/kwangsuklee/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-GGUF:latest"
+      api_base: "http://localhost:11434"
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: "sk-litellm"
