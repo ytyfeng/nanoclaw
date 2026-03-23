@@ -263,7 +263,10 @@ export class GmailChannel implements Channel {
 
     // Skip bulk/automated mail based on standard headers
     if (this.isBulkOrAutomated(headers)) {
-      logger.debug({ messageId, subject, from }, 'Skipping bulk/automated email');
+      logger.debug(
+        { messageId, subject, from },
+        'Skipping bulk/automated email',
+      );
       return;
     }
 
@@ -271,7 +274,10 @@ export class GmailChannel implements Channel {
     const to = getHeader('To');
     const cc = getHeader('Cc');
     if (!this.isDirectlyAddressed(to, cc)) {
-      logger.debug({ messageId, subject, from }, 'Skipping email not directly addressed to user');
+      logger.debug(
+        { messageId, subject, from },
+        'Skipping email not directly addressed to user',
+      );
       return;
     }
 
@@ -342,16 +348,21 @@ export class GmailChannel implements Channel {
    * Returns true if standard bulk/automated mail headers are present.
    * Nearly all newsletters, marketing, and automated emails include at least one.
    */
-  private isBulkOrAutomated(headers: gmail_v1.Schema$MessagePartHeader[]): boolean {
+  private isBulkOrAutomated(
+    headers: gmail_v1.Schema$MessagePartHeader[],
+  ): boolean {
     const get = (name: string) =>
-      headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value?.toLowerCase() || '';
+      headers
+        .find((h) => h.name?.toLowerCase() === name.toLowerCase())
+        ?.value?.toLowerCase() || '';
 
     // List-Unsubscribe is required by law on bulk mail (RFC 2369)
     if (get('list-unsubscribe')) return true;
 
     // Precedence header signals bulk, list, or junk mail
     const precedence = get('precedence');
-    if (precedence === 'bulk' || precedence === 'list' || precedence === 'junk') return true;
+    if (precedence === 'bulk' || precedence === 'list' || precedence === 'junk')
+      return true;
 
     // Auto-submitted indicates automated messages (delivery receipts, bots, etc.)
     const autoSubmitted = get('auto-submitted');
@@ -359,7 +370,13 @@ export class GmailChannel implements Channel {
 
     // X-Mailer patterns common in marketing platforms
     const xMailer = get('x-mailer');
-    if (xMailer && /mailchimp|sendgrid|hubspot|marketo|salesforce|klaviyo|constant.contact/i.test(xMailer)) return true;
+    if (
+      xMailer &&
+      /mailchimp|sendgrid|hubspot|marketo|salesforce|klaviyo|constant.contact/i.test(
+        xMailer,
+      )
+    )
+      return true;
 
     return false;
   }
