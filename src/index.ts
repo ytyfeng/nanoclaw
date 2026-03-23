@@ -582,6 +582,30 @@ async function main(): Promise<void> {
 
   // Channel callbacks (shared by all channels)
   const channelOpts = {
+    onAutoRegister: (jid: string, channelName: string) => {
+      if (registeredGroups[jid]) return;
+      const sanitized = channelName
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '_')
+        .slice(0, 50);
+      const base = `slack_${sanitized || jid.replace(/^slack:/, '').toLowerCase()}`;
+      const existingFolders = new Set(
+        Object.values(registeredGroups).map((g) => g.folder),
+      );
+      let folder = base;
+      let n = 2;
+      while (existingFolders.has(folder)) {
+        folder = `${base}_${n++}`;
+      }
+      registerGroup(jid, {
+        name: channelName,
+        folder,
+        trigger: `@${ASSISTANT_NAME}`,
+        added_at: new Date().toISOString(),
+        requiresTrigger: false,
+      });
+      logger.info({ jid, channelName, folder }, 'Auto-registered Slack channel');
+    },
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Remote control commands — intercept before storage
       const trimmed = msg.content.trim();

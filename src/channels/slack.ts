@@ -31,6 +31,7 @@ export interface SlackChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  onAutoRegister?: (jid: string, channelName: string) => void;
 }
 
 export class SlackChannel implements Channel {
@@ -72,7 +73,28 @@ export class SlackChannel implements Channel {
     this.setupEventHandlers();
   }
 
+  private async getChannelName(channelId: string): Promise<string> {
+    try {
+      const result = await this.app.client.conversations.info({
+        channel: channelId,
+      });
+      return (result.channel as { name?: string })?.name || channelId;
+    } catch {
+      return channelId;
+    }
+  }
+
   private setupEventHandlers(): void {
+    // Auto-register when the bot is invited to a new channel
+    this.app.event('member_joined_channel', async ({ event }) => {
+      if (event.user !== this.botUserId) return;
+      const jid = `slack:${event.channel}`;
+      if (this.opts.registeredGroups()[jid]) return;
+      if (!this.opts.onAutoRegister) return;
+      const name = await this.getChannelName(event.channel);
+      this.opts.onAutoRegister(jid, name);
+    });
+
     // Use app.event('message') instead of app.message() to capture all
     // message subtypes including bot_message (needed to track our own output)
     this.app.event('message', async ({ event }) => {
@@ -99,9 +121,17 @@ export class SlackChannel implements Channel {
       // Always report metadata for group discovery
       this.opts.onChatMetadata(jid, timestamp, undefined, 'slack', isGroup);
 
-      // Only deliver full messages for registered groups
-      const groups = this.opts.registeredGroups();
-      if (!groups[jid]) return;
+      // Auto-register unregistered channels on first non-bot message
+      let groups = this.opts.registeredGroups();
+      if (!groups[jid]) {
+        const isBotMsg = !!(event as { bot_id?: string }).bot_id;
+        if (!isBotMsg && this.opts.onAutoRegister) {
+          const name = await this.getChannelName(msg.channel);
+          this.opts.onAutoRegister(jid, name);
+          groups = this.opts.registeredGroups();
+        }
+        if (!groups[jid]) return;
+      }
 
       const isBotMessage = !!msg.bot_id || msg.user === this.botUserId;
 
