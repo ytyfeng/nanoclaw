@@ -322,6 +322,8 @@ function buildLocalEnv(
     NANOCLAW_GLOBAL_DIR: globalDir,
     // Per-group isolated .claude/ directory
     HOME: path.dirname(claudeDir),
+    // Real home dir for MCP servers that need it (e.g. Gmail credentials at ~/.gmail-mcp/)
+    NANOCLAW_HOST_HOME: os.homedir(),
     // Ollama host for local MCP server
     ...(OLLAMA_HOST && { OLLAMA_HOST }),
   };

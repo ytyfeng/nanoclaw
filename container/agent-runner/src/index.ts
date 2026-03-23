@@ -481,6 +481,11 @@ async function runQuery(
         gmail: {
           command: 'npx',
           args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
+          // Use the real home dir so the MCP server finds ~/.gmail-mcp/ credentials.
+          // In local runner mode, HOME is overridden to the sessions dir for .claude isolation.
+          env: {
+            HOME: process.env.NANOCLAW_HOST_HOME || process.env.HOME || '',
+          },
         },
       },
       hooks: {

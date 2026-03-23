@@ -604,7 +604,10 @@ async function main(): Promise<void> {
         added_at: new Date().toISOString(),
         requiresTrigger: false,
       });
-      logger.info({ jid, channelName, folder }, 'Auto-registered Slack channel');
+      logger.info(
+        { jid, channelName, folder },
+        'Auto-registered Slack channel',
+      );
     },
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Remote control commands — intercept before storage
