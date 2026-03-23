@@ -91,9 +91,13 @@ export class GmailChannel implements Channel {
 
     // Start polling with error backoff
     const schedulePoll = () => {
-      const backoffMs = this.consecutiveErrors > 0
-        ? Math.min(this.pollIntervalMs * Math.pow(2, this.consecutiveErrors), 30 * 60 * 1000)
-        : this.pollIntervalMs;
+      const backoffMs =
+        this.consecutiveErrors > 0
+          ? Math.min(
+              this.pollIntervalMs * Math.pow(2, this.consecutiveErrors),
+              30 * 60 * 1000,
+            )
+          : this.pollIntervalMs;
       this.pollTimer = setTimeout(() => {
         this.pollForMessages()
           .catch((err) => logger.error({ err }, 'Gmail poll error'))
@@ -178,7 +182,9 @@ export class GmailChannel implements Channel {
   // --- Private ---
 
   private buildQuery(): string {
-    return 'is:unread category:primary';
+    // category:primary excludes Promotions, Social, Updates, Forums tabs.
+    // Additional exclusions catch bulk mail that Gmail miscategorises.
+    return 'is:unread category:primary -label:bulk -from:noreply -from:no-reply -from:donotreply';
   }
 
   private async pollForMessages(): Promise<void> {
@@ -210,8 +216,18 @@ export class GmailChannel implements Channel {
       this.consecutiveErrors = 0;
     } catch (err) {
       this.consecutiveErrors++;
-      const backoffMs = Math.min(this.pollIntervalMs * Math.pow(2, this.consecutiveErrors), 30 * 60 * 1000);
-      logger.error({ err, consecutiveErrors: this.consecutiveErrors, nextPollMs: backoffMs }, 'Gmail poll failed');
+      const backoffMs = Math.min(
+        this.pollIntervalMs * Math.pow(2, this.consecutiveErrors),
+        30 * 60 * 1000,
+      );
+      logger.error(
+        {
+          err,
+          consecutiveErrors: this.consecutiveErrors,
+          nextPollMs: backoffMs,
+        },
+        'Gmail poll failed',
+      );
     }
   }
 
@@ -245,6 +261,20 @@ export class GmailChannel implements Channel {
     // Skip emails from self (our own replies)
     if (senderEmail === this.userEmail) return;
 
+    // Skip bulk/automated mail based on standard headers
+    if (this.isBulkOrAutomated(headers)) {
+      logger.debug({ messageId, subject, from }, 'Skipping bulk/automated email');
+      return;
+    }
+
+    // Skip if not directly addressed to us (catches BCC'd mass emails)
+    const to = getHeader('To');
+    const cc = getHeader('Cc');
+    if (!this.isDirectlyAddressed(to, cc)) {
+      logger.debug({ messageId, subject, from }, 'Skipping email not directly addressed to user');
+      return;
+    }
+
     // Extract body text
     const body = this.extractTextBody(msg.data.payload);
 
@@ -268,9 +298,7 @@ export class GmailChannel implements Channel {
 
     // Find the main group to deliver the email notification
     const groups = this.opts.registeredGroups();
-    const mainEntry = Object.entries(groups).find(
-      ([, g]) => g.isMain === true,
-    );
+    const mainEntry = Object.entries(groups).find(([, g]) => g.isMain === true);
 
     if (!mainEntry) {
       logger.debug(
@@ -308,6 +336,42 @@ export class GmailChannel implements Channel {
       { mainJid, from: senderName, subject },
       'Gmail email delivered to main group',
     );
+  }
+
+  /**
+   * Returns true if standard bulk/automated mail headers are present.
+   * Nearly all newsletters, marketing, and automated emails include at least one.
+   */
+  private isBulkOrAutomated(headers: gmail_v1.Schema$MessagePartHeader[]): boolean {
+    const get = (name: string) =>
+      headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value?.toLowerCase() || '';
+
+    // List-Unsubscribe is required by law on bulk mail (RFC 2369)
+    if (get('list-unsubscribe')) return true;
+
+    // Precedence header signals bulk, list, or junk mail
+    const precedence = get('precedence');
+    if (precedence === 'bulk' || precedence === 'list' || precedence === 'junk') return true;
+
+    // Auto-submitted indicates automated messages (delivery receipts, bots, etc.)
+    const autoSubmitted = get('auto-submitted');
+    if (autoSubmitted && autoSubmitted !== 'no') return true;
+
+    // X-Mailer patterns common in marketing platforms
+    const xMailer = get('x-mailer');
+    if (xMailer && /mailchimp|sendgrid|hubspot|marketo|salesforce|klaviyo|constant.contact/i.test(xMailer)) return true;
+
+    return false;
+  }
+
+  /**
+   * Returns true if the user's email appears explicitly in To: or Cc:.
+   * Filters out BCC'd mass sends where the recipient list is hidden.
+   */
+  private isDirectlyAddressed(to: string, cc: string): boolean {
+    if (!this.userEmail) return true; // can't check, let it through
+    const combined = `${to} ${cc}`.toLowerCase();
+    return combined.includes(this.userEmail.toLowerCase());
   }
 
   private extractTextBody(

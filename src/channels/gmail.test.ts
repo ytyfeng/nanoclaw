@@ -62,8 +62,10 @@ describe('GmailChannel', () => {
 
     it('defaults to unread query when no filter configured', () => {
       const ch = new GmailChannel(makeOpts());
-      const query = (ch as unknown as { buildQuery: () => string }).buildQuery();
-      expect(query).toBe('is:unread category:primary');
+      const query = (
+        ch as unknown as { buildQuery: () => string }
+      ).buildQuery();
+      expect(query).toBe('is:unread category:primary -label:bulk -from:noreply -from:no-reply -from:donotreply');
     });
 
     it('defaults with no options provided', () => {

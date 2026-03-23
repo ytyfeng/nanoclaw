@@ -532,7 +532,10 @@ async function main(): Promise<void> {
     saveState();
 
     logger.info({ group: group.name }, 'New conversation started via /new');
-    await channel.sendMessage(chatJid, 'New conversation started. Context cleared.');
+    await channel.sendMessage(
+      chatJid,
+      'New conversation started. Context cleared.',
+    );
   }
 
   // Handle /remote-control and /remote-control-end commands

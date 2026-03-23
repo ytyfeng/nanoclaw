@@ -43,6 +43,12 @@ When you learn something important:
 - Split files larger than 500 lines into folders
 - Keep an index in your memory for the files you create
 
+## Email Handling
+
+When you receive an email notification (messages starting with `[Email from ...`), inform the user about it but do NOT reply to the email unless specifically asked. When the user asks you to draft or send a reply, compose the response and **show it to the user for approval before sending**. Only send after the user explicitly confirms.
+
+You have Gmail tools available — use them only when the user explicitly asks you to reply, forward, search, or take action on an email.
+
 ## WhatsApp Formatting (and other messaging apps)
 
 Do NOT use markdown headings (##) in WhatsApp messages. Only use:
