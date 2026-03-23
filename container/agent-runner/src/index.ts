@@ -505,6 +505,15 @@ async function runQuery(
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+
+      // Thinking blocks conflict: throw so main() can retry with a fresh session.
+      // The SDK surfaces this as a result message (not an exception), so we must
+      // intercept it here before it gets forwarded to the user.
+      if (textResult && textResult.includes('thinking') && textResult.includes('cannot be modified')) {
+        ipcPolling = false;
+        throw new Error(textResult);
+      }
+
       writeOutput({
         status: 'success',
         result: textResult || null,
@@ -565,7 +574,20 @@ async function main(): Promise<void> {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      let queryResult;
+      try {
+        queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('thinking') && msg.includes('cannot be modified')) {
+          log(`Thinking blocks conflict; clearing session and retrying fresh (was session=${sessionId})`);
+          sessionId = undefined;
+          resumeAt = undefined;
+          queryResult = await runQuery(prompt, undefined, mcpServerPath, containerInput, sdkEnv, undefined);
+        } else {
+          throw err;
+        }
+      }
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }

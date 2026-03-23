@@ -27,6 +27,7 @@ import {
   PROXY_BIND_HOST,
 } from './container-runtime.js';
 import {
+  deleteSession,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -214,32 +215,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, imageAttachments, async (result) => {
-    // Streaming output callback — called for each agent result
-    if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
+  const output = await runAgent(
+    group,
+    prompt,
+    chatJid,
+    imageAttachments,
+    async (result) => {
+      // Streaming output callback — called for each agent result
+      if (result.result) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        logger.info(
+          { group: group.name },
+          `Agent output: ${raw.slice(0, 200)}`,
+        );
+        if (text) {
+          await channel.sendMessage(chatJid, text);
+          outputSentToUser = true;
+        }
+        // Only reset idle timer on actual results, not session-update markers (result: null)
+        resetIdleTimer();
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
 
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
+      if (result.status === 'success') {
+        queue.notifyIdle(chatJid);
+      }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  });
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    },
+  );
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -498,6 +508,33 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
+  // Handle /new — start a fresh conversation (clear session + advance cursor)
+  async function handleNewConversation(
+    chatJid: string,
+    msgTimestamp: string,
+  ): Promise<void> {
+    const group = registeredGroups[chatJid];
+    if (!group) return;
+
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    // Gracefully stop any active container for this group
+    queue.closeStdin(chatJid);
+
+    // Clear session from memory and DB
+    delete sessions[group.folder];
+    deleteSession(group.folder);
+
+    // Advance the message cursor to this moment so messages sent before /new
+    // don't get replayed into the new session
+    lastAgentTimestamp[chatJid] = msgTimestamp;
+    saveState();
+
+    logger.info({ group: group.name }, 'New conversation started via /new');
+    await channel.sendMessage(chatJid, 'New conversation started. Context cleared.');
+  }
+
   // Handle /remote-control and /remote-control-end commands
   async function handleRemoteControl(
     command: string,
@@ -548,6 +585,14 @@ async function main(): Promise<void> {
       if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
         handleRemoteControl(trimmed, chatJid, msg).catch((err) =>
           logger.error({ err, chatJid }, 'Remote control command error'),
+        );
+        return;
+      }
+
+      // /new — start a fresh conversation, clears session and context
+      if (trimmed === '/new' && registeredGroups[chatJid]) {
+        handleNewConversation(chatJid, msg.timestamp).catch((err) =>
+          logger.error({ err, chatJid }, 'New conversation command error'),
         );
         return;
       }
