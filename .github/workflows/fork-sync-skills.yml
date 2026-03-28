@@ -69,6 +69,17 @@ jobs:
             git status --short | awk '/^(UD|DU) /{print $2}'
           }
 
+          # 0. Source files that must always stay at our fork's version,
+          #    even if git auto-merged them without a conflict.
+          #    These files export symbols (CREDENTIAL_PROXY_PORT, CONTAINER_HOST_GATEWAY,
+          #    PROXY_BIND_HOST) that upstream removed when migrating to OneCLI,
+          #    but our fork's credential proxy system still needs them.
+          for f in src/config.ts src/container-runtime.ts src/index.ts \
+                   src/container-runner.ts container/agent-runner/src/index.ts; do
+            echo "Force-keeping ours: $f"
+            git checkout HEAD -- "$f" 2>/dev/null || true
+          done
+
           # 1. Fork-identity files: always keep ours
           for f in .env.example repo-tokens/badge.svg; do
             if content_conflicts | grep -qx "$f"; then
