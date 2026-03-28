@@ -54,16 +54,97 @@ jobs:
             exit 0
           fi
 
-          # Merge upstream main into fork's main
-          if ! git merge upstream/main --no-edit; then
-            echo "::error::Failed to merge upstream/main into fork main — conflicts detected"
+          # Attempt merge (allow failure — we handle conflicts below)
+          git merge upstream/main --no-edit || true
+
+          # ── Smart conflict resolution ──────────────────────────────────────
+
+          # Content conflicts (UU): files modified on both sides
+          content_conflicts() {
+            git status --short | awk '/^UU /{print $2}'
+          }
+
+          # Modify/delete conflicts: upstream deleted, we modified (UD) or vice versa (DU)
+          modify_delete_conflicts() {
+            git status --short | awk '/^(UD|DU) /{print $2}'
+          }
+
+          # 1. Fork-identity files: always keep ours
+          for f in .env.example repo-tokens/badge.svg; do
+            if content_conflicts | grep -qx "$f"; then
+              echo "Resolving $f: keeping ours"
+              git checkout HEAD -- "$f"
+            fi
+          done
+
+          # 2. Group CLAUDE.md files: fork-specific agent memory — keep ours
+          for f in $(content_conflicts | grep "^groups/"); do
+            echo "Resolving $f: keeping ours (group memory)"
+            git checkout HEAD -- "$f"
+          done
+
+          # 3. Modify/delete conflicts: upstream removed files we still use — keep ours
+          for f in $(modify_delete_conflicts); do
+            echo "Resolving $f: keeping ours (modify/delete)"
+            git add "$f"
+          done
+
+          # 4. package.json: smart merge — upstream version, union of all deps
+          if content_conflicts | grep -qx "package.json"; then
+            echo "Resolving package.json: smart merge"
+            node - <<'NODEJS'
+          const { execSync } = require('child_process');
+          const fs = require('fs');
+          const head = JSON.parse(execSync('git show HEAD:package.json').toString());
+          const up   = JSON.parse(execSync('git show MERGE_HEAD:package.json').toString());
+
+          // Take upstream's version; keep all other top-level fields from HEAD
+          const result = { ...head, version: up.version };
+
+          // Dependencies: start with HEAD (keeps our additions),
+          // then overlay upstream pins for shared packages.
+          function mergeDeps(ours, theirs) {
+            if (!ours && !theirs) return undefined;
+            const merged = { ...(ours || {}) };
+            for (const [k, v] of Object.entries(theirs || {})) merged[k] = v;
+            return Object.fromEntries(Object.entries(merged).sort(([a],[b]) => a.localeCompare(b)));
+          }
+
+          result.dependencies    = mergeDeps(head.dependencies,    up.dependencies);
+          result.devDependencies = mergeDeps(head.devDependencies, up.devDependencies);
+
+          fs.writeFileSync('package.json', JSON.stringify(result, null, 2) + '\n');
+          NODEJS
+            git add package.json
+          fi
+
+          # 5. package-lock.json: regenerate from the resolved package.json
+          if content_conflicts | grep -qx "package-lock.json"; then
+            echo "Resolving package-lock.json: regenerating"
+            npm install --package-lock-only 2>/dev/null || npm install
+            git add package-lock.json
+          fi
+
+          # 6. Any remaining source-file conflicts: keep ours as safe fallback
+          for f in $(content_conflicts); do
+            echo "Resolving $f: keeping ours (source fallback)"
+            git checkout HEAD -- "$f"
+          done
+
+          # ── Verify all conflicts are resolved ─────────────────────────────
+          REMAINING=$(git status --short | grep "^[UAD][UAD] " | awk '{print $2}')
+          if [ -n "$REMAINING" ]; then
+            echo "::error::Unresolvable conflicts remain: $REMAINING"
             git merge --abort
             echo "synced=false" >> "$GITHUB_OUTPUT"
             echo "sync_failed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Validate build
+          # Complete the merge commit
+          GIT_EDITOR=true git merge --continue
+
+          # ── Validate ──────────────────────────────────────────────────────
           npm ci
           if ! npm run build; then
             echo "::error::Build failed after merging upstream/main"
