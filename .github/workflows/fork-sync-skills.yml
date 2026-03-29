@@ -71,14 +71,24 @@ jobs:
 
           # 0. Source files that must always stay at our fork's version,
           #    even if git auto-merged them without a conflict.
-          #    These files export symbols (CREDENTIAL_PROXY_PORT, CONTAINER_HOST_GATEWAY,
-          #    PROXY_BIND_HOST) that upstream removed when migrating to OneCLI,
-          #    but our fork's credential proxy system still needs them.
-          for f in src/config.ts src/container-runtime.ts src/index.ts \
-                   src/container-runner.ts container/agent-runner/src/index.ts; do
+          #    - container-runtime.ts: exports PROXY_BIND_HOST, CONTAINER_HOST_GATEWAY
+          #      which upstream removed when migrating to OneCLI
+          #    - index.ts, container-runner.ts, agent-runner: have imageAttachments
+          #      and credential-proxy startup logic
+          for f in src/container-runtime.ts src/index.ts \
+                   src/container-runner.ts container/agent-runner/src/index.ts \
+                   src/ipc.ts src/types.ts src/timezone.ts src/db.ts; do
             echo "Force-keeping ours: $f"
             git checkout HEAD -- "$f" 2>/dev/null || true
           done
+
+          # config.ts: take auto-merge (upstream keeps adding new exports),
+          # but ensure our CREDENTIAL_PROXY_PORT addition is preserved.
+          if ! grep -q "CREDENTIAL_PROXY_PORT" src/config.ts; then
+            echo "Patching src/config.ts: adding CREDENTIAL_PROXY_PORT"
+            sed -i '/^export const ONECLI_URL/a\\nexport const CREDENTIAL_PROXY_PORT = parseInt(\n  process.env.CREDENTIAL_PROXY_PORT || '"'"'3001'"'"',\n  10,\n);' src/config.ts
+            git add src/config.ts
+          fi
 
           # 1. Fork-identity files: always keep ours
           for f in .env.example repo-tokens/badge.svg; do
