@@ -193,6 +193,10 @@ jobs:
             exit 0
           fi
 
+          # Rebase onto origin/main in case it advanced while we were building/testing
+          git fetch origin main
+          git rebase origin/main
+
           git push origin main
           echo "synced=true" >> "$GITHUB_OUTPUT"
 
