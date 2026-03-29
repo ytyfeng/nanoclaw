@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Mock env so isLocalRunner() returns false in tests
+vi.mock('./env.js', () => ({
+  readEnvFile: vi.fn(() => ({})),
+}));
+
 // Mock logger
 vi.mock('./logger.js', () => ({
   logger: {
