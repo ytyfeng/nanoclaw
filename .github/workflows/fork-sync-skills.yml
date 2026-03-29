@@ -15,7 +15,6 @@ on:
 permissions:
   contents: write
   issues: write
-  workflows: write
 
 concurrency:
   group: fork-sync
@@ -76,6 +75,14 @@ jobs:
           #      which upstream removed when migrating to OneCLI
           #    - index.ts, container-runner.ts, agent-runner: have imageAttachments
           #      and credential-proxy startup logic
+          # Workflow files: GITHUB_TOKEN cannot push changes to .github/workflows/
+          # Always keep ours to avoid the "refusing to allow a GitHub App to
+          # create or update workflow" push rejection.
+          for f in $(git diff --name-only HEAD MERGE_HEAD 2>/dev/null | grep "^\.github/workflows/"); do
+            echo "Force-keeping ours: $f (workflow file)"
+            git checkout HEAD -- "$f" 2>/dev/null || true
+          done
+
           for f in src/container-runtime.ts src/index.ts \
                    src/container-runner.ts container/agent-runner/src/index.ts \
                    src/ipc.ts src/types.ts src/timezone.ts src/db.ts \
