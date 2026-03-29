@@ -70,6 +70,15 @@ function createFakeProcess() {
 
 let fakeProc: ReturnType<typeof createFakeProcess>;
 
+// Mock container-runtime (includes CONTAINER_HOST_GATEWAY used by our fork)
+vi.mock('./container-runtime.js', () => ({
+  CONTAINER_RUNTIME_BIN: 'docker',
+  CONTAINER_HOST_GATEWAY: 'host.docker.internal',
+  hostGatewayArgs: () => [],
+  readonlyMountArgs: (h: string, c: string) => ['-v', `${h}:${c}:ro`],
+  stopContainer: vi.fn(),
+}));
+
 // Mock child_process.spawn
 vi.mock('child_process', async () => {
   const actual =

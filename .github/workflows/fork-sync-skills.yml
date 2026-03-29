@@ -77,7 +77,9 @@ jobs:
           #      and credential-proxy startup logic
           for f in src/container-runtime.ts src/index.ts \
                    src/container-runner.ts container/agent-runner/src/index.ts \
-                   src/ipc.ts src/types.ts src/timezone.ts src/db.ts; do
+                   src/ipc.ts src/types.ts src/timezone.ts src/db.ts \
+                   src/remote-control.ts src/remote-control.test.ts \
+                   src/container-runtime.test.ts src/container-runner.test.ts; do
             echo "Force-keeping ours: $f"
             git checkout HEAD -- "$f" 2>/dev/null || true
           done
