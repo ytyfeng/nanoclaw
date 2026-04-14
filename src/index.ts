@@ -47,7 +47,7 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { parseImageReferences } from './image.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { findChannel, formatMessages, formatOutbound, extractSendFileTags } from './router.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -228,7 +228,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             ? result.result
             : JSON.stringify(result.result);
         // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        const stripped = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        // Extract [SEND_FILE: path] tags and resolve to host paths
+        const { cleanText: text, filePaths } = extractSendFileTags(stripped, group.folder);
         logger.info(
           { group: group.name },
           `Agent output: ${raw.slice(0, 200)}`,
@@ -236,6 +238,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (text) {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
+        }
+        for (const filePath of filePaths) {
+          if (channel.sendFile) {
+            await channel.sendFile(chatJid, filePath).catch((err) =>
+              logger.warn({ chatJid, filePath, err }, 'Failed to send file'),
+            );
+            outputSentToUser = true;
+          }
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
         resetIdleTimer();

@@ -28,6 +28,31 @@ export function stripInternalTags(text: string): string {
   return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
 }
 
+/**
+ * Extract [SEND_FILE: /workspace/group/foo.csv] tags from agent output.
+ * Returns the cleaned text and a list of resolved host file paths.
+ * Container path /workspace/group/ maps to groups/{groupFolder}/ on host.
+ */
+export function extractSendFileTags(
+  text: string,
+  groupFolder: string,
+): { cleanText: string; filePaths: string[] } {
+  const filePaths: string[] = [];
+  const cleanText = text
+    .replace(/\[SEND_FILE:\s*([^\]]+)\]/g, (_match, p: string) => {
+      const containerPath = p.trim();
+      const hostPath = containerPath.startsWith('/workspace/group/')
+        ? containerPath.replace('/workspace/group/', `groups/${groupFolder}/`)
+        : containerPath.startsWith('/workspace/extra/')
+          ? containerPath.replace('/workspace/extra/', 'extra/')
+          : null;
+      if (hostPath) filePaths.push(hostPath);
+      return '';
+    })
+    .trim();
+  return { cleanText, filePaths };
+}
+
 export function formatOutbound(rawText: string): string {
   const text = stripInternalTags(rawText);
   if (!text) return '';

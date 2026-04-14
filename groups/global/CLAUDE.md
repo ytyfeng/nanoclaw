@@ -39,6 +39,16 @@ When working as a sub-agent or teammate, only use `send_message` if instructed t
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
 
+### Sending files to the user
+
+To send a file back to the user (CSV, image, PDF, etc.), write it to `/workspace/group/` and include a `[SEND_FILE: /workspace/group/filename.ext]` tag anywhere in your response:
+
+```
+Here are the results: [SEND_FILE: /workspace/group/results.csv]
+```
+
+The tag is stripped from the displayed text and the file is uploaded to the channel automatically. Supported on Slack. On other channels, share the content inline instead.
+
 ## Memory
 
 The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.

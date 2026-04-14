@@ -310,6 +310,26 @@ export class SlackChannel implements Channel {
     }
   }
 
+  async sendFile(jid: string, filePath: string, filename?: string): Promise<void> {
+    const channelId = jid.replace(/^slack:/, '');
+    const name = filename || path.basename(filePath);
+    try {
+      await this.app.client.files.uploadV2({
+        channel_id: channelId,
+        file: fs.createReadStream(filePath),
+        filename: name,
+        title: name,
+      });
+      logger.info({ jid, filePath, name }, 'Slack file uploaded');
+    } catch (err) {
+      logger.error({ jid, filePath, err }, 'Failed to upload file to Slack');
+      await this.app.client.chat.postMessage({
+        channel: channelId,
+        text: `(Could not upload file: ${name})`,
+      });
+    }
+  }
+
   isConnected(): boolean {
     return this.connected;
   }
