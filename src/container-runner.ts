@@ -284,6 +284,68 @@ function buildContainerArgs(
   return args;
 }
 
+// Configure git so `git push`/`git pull` against github.com authenticate
+// transparently with GITHUB_TOKEN, without an interactive credential prompt.
+// url.insteadOf rewrites are read on every git invocation — no running
+// credential-helper process needed, safe for a one-shot agent sandbox.
+function writeGitCredentials(homeDir: string, githubToken: string): void {
+  const gitconfigPath = path.join(homeDir, '.gitconfig');
+  const authenticatedUrl = `https://${githubToken}@github.com/`;
+  const config = [
+    '[url "' + authenticatedUrl + '"]',
+    '\tinsteadOf = https://github.com/',
+    '[credential "https://github.com"]',
+    '\thelper =',
+  ].join('\n');
+  fs.mkdirSync(homeDir, { recursive: true });
+  fs.writeFileSync(gitconfigPath, config + '\n', { mode: 0o600 });
+}
+
+// Playwright's own bundled chromium (downloaded once at the real host home via
+// `agent-browser install` / npx playwright install, shared across all groups —
+// group HOME remaps don't affect this since it's browser binaries, not profile
+// data). Verified more reliable than the system snap chromium for agent-browser's
+// CDP handshake: the snap's AppArmor confinement adds enough startup latency
+// that the daemon's read-with-retries gives up (`Failed to read: Resource
+// temporarily unavailable ... daemon may be busy or unresponsive`).
+function findPlaywrightChromium(): string | undefined {
+  const cacheDir = path.join(os.homedir(), '.cache', 'ms-playwright');
+  if (!fs.existsSync(cacheDir)) return undefined;
+  const versionDir = fs
+    .readdirSync(cacheDir)
+    .find((d) => d.startsWith('chromium-') && !d.includes('headless_shell'));
+  if (!versionDir) return undefined;
+  const chromePath = path.join(
+    cacheDir,
+    versionDir,
+    'chrome-linux64',
+    'chrome',
+  );
+  return fs.existsSync(chromePath) ? chromePath : undefined;
+}
+
+// If the host virtual desktop (scripts/desktop-daemon.sh, systemd unit
+// nanoclaw-desktop.service) is running, point agents at its DISPLAY and a
+// known-working Chromium binary so `agent-browser open <url> --headed`
+// renders into that visible, noVNC-streamed desktop instead of running
+// headless. --no-sandbox is required for Chromium's own zygote sandbox,
+// which fails outside a real login session (see chrome_sandbox docs).
+function getDesktopDisplayEnv(): Record<string, string> {
+  const displayNum = process.env.NANOCLAW_DESKTOP_DISPLAY || ':1';
+  const socketNum = displayNum.replace(/^:/, '');
+  const socketPath = `/tmp/.X11-unix/X${socketNum}`;
+  if (!fs.existsSync(socketPath)) return {};
+
+  const chromiumPath = findPlaywrightChromium();
+  return {
+    DISPLAY: displayNum,
+    ...(chromiumPath && {
+      AGENT_BROWSER_EXECUTABLE_PATH: chromiumPath,
+      AGENT_BROWSER_ARGS: '--no-sandbox',
+    }),
+  };
+}
+
 function buildLocalEnv(
   group: RegisteredGroup,
   mounts: VolumeMount[],
@@ -298,14 +360,19 @@ function buildLocalEnv(
 
   const bedrockVarNames = [
     'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_MANTLE',
     'AWS_REGION',
     'AWS_BEARER_TOKEN_BEDROCK',
+    'ANTHROPIC_AWS_WORKSPACE_ID',
     'ANTHROPIC_MODEL',
     'ANTHROPIC_SMALL_FAST_MODEL',
   ];
   const bedrockVars = readEnvFile(bedrockVarNames);
   const { OLLAMA_HOST } = readEnvFile(['OLLAMA_HOST']);
-  const useBedrock = bedrockVars.CLAUDE_CODE_USE_BEDROCK === '1';
+  const { GITHUB_TOKEN } = readEnvFile(['GITHUB_TOKEN']);
+  const useBedrock =
+    bedrockVars.CLAUDE_CODE_USE_BEDROCK === '1' ||
+    bedrockVars.CLAUDE_CODE_USE_MANTLE === '1';
 
   // Ensure node binary directory is in PATH so the SDK can spawn `node` for claude cli.js
   const nodeBinDir = path.dirname(process.execPath);
@@ -320,6 +387,10 @@ function buildLocalEnv(
     TZ: TIMEZONE,
     NANOCLAW_GROUP_DIR: groupDir,
     NANOCLAW_IPC_INPUT_DIR: path.join(ipcDir, 'input'),
+    // ipc-mcp-stdio.ts (send_message, schedule_task, etc.) also needs the
+    // base IPC dir directly — /workspace/ipc doesn't exist on the host in
+    // local-runner mode, so without this it fails EACCES trying to mkdir there.
+    NANOCLAW_IPC_DIR: ipcDir,
     NANOCLAW_GLOBAL_DIR: globalDir,
     // Per-group isolated .claude/ directory
     HOME: path.dirname(claudeDir),
@@ -327,6 +398,14 @@ function buildLocalEnv(
     NANOCLAW_HOST_HOME: os.homedir(),
     // Ollama host for local MCP server
     ...(OLLAMA_HOST && { OLLAMA_HOST }),
+    // GitHub token for git push/gh CLI — GH_TOKEN is what `gh` reads;
+    // GITHUB_TOKEN is used by the git credential helper set up below.
+    ...(GITHUB_TOKEN && { GITHUB_TOKEN, GH_TOKEN: GITHUB_TOKEN }),
+    // Host virtual desktop for GUI browsing (see scripts/desktop-daemon.sh):
+    // only set when the X socket actually exists, so this is a no-op on
+    // installs without the desktop daemon running. Only meaningful in
+    // LOCAL_RUNNER mode — Docker/container mode can't see the host X socket.
+    ...getDesktopDisplayEnv(),
   };
 
   if (useBedrock) {
@@ -343,6 +422,10 @@ function buildLocalEnv(
     } else {
       env.CLAUDE_CODE_OAUTH_TOKEN = 'placeholder';
     }
+  }
+
+  if (GITHUB_TOKEN) {
+    writeGitCredentials(env.HOME!, GITHUB_TOKEN);
   }
 
   return env;
@@ -407,6 +490,10 @@ export async function runContainerAgent(
       container = spawn(process.execPath, [agentRunnerEntry], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: localEnv,
+        // New process group so killOnTimeout can reap grandchildren
+        // (the claude CLI, ipc-mcp-stdio.js, etc.) — killing just this
+        // top-level PID orphans them and they keep running past timeout.
+        detached: true,
       });
     } else {
       container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
@@ -521,6 +608,21 @@ export async function runContainerAgent(
         { group: group.name, containerName },
         'Container timeout, stopping gracefully',
       );
+      if (localRunner) {
+        // No real container to `stop` — kill the whole process group
+        // (negative PID) so grandchildren like the claude CLI don't
+        // survive as orphans past the timeout.
+        try {
+          if (container.pid) process.kill(-container.pid, 'SIGKILL');
+        } catch (err) {
+          logger.warn(
+            { group: group.name, containerName, err },
+            'Failed to kill local-runner process group',
+          );
+          container.kill('SIGKILL');
+        }
+        return;
+      }
       exec(
         `${CONTAINER_RUNTIME_BIN} stop -t 1 ${containerName}`,
         { timeout: 15000 },
