@@ -78,3 +78,7 @@ systemctl --user restart nanoclaw
 ## Container Build Cache
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
+
+## Watchable GUI Browser (virtual desktop)
+
+On servers with the virtual desktop running (`nanoclaw-desktop.service`, from `scripts/desktop-daemon.sh` — Xvfb + fluxbox + x11vnc + noVNC on `DISPLAY=:1`), agents can drive a real, human-watchable Chromium window instead of a headless one. `buildLocalEnv` in `src/container-runner.ts` detects the X socket and injects `DISPLAY`, `AGENT_BROWSER_EXECUTABLE_PATH` (Playwright's bundled chromium — more reliable than system/snap chromium for `agent-browser`'s CDP handshake), and `AGENT_BROWSER_ARGS=--no-sandbox` into `LOCAL_RUNNER` agent processes automatically. Agents just add `--headed` to any `agent-browser open` call. See the `agent-browser` container skill for the agent-facing usage. Docker/container-runtime mode (non-`LOCAL_RUNNER`) can't see the host X socket, so this only applies to local-runner deployments.

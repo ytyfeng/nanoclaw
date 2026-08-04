@@ -23,6 +23,20 @@ agent-browser close             # Close browser
 3. Interact using refs from the snapshot
 4. Re-snapshot after navigation or significant DOM changes
 
+## Watchable / GUI mode
+
+By default `agent-browser` runs headless — no window, nothing to look at. On servers running the NanoClaw virtual desktop (`nanoclaw-desktop.service` / `scripts/desktop-daemon.sh`), the host has `DISPLAY`, `AGENT_BROWSER_EXECUTABLE_PATH`, and `AGENT_BROWSER_ARGS` already set in your environment, so adding `--headed` makes the browser render into that visible, shared virtual display instead — the human can watch live over noVNC (tunneled via SSH, never exposed publicly), and you can `agent-browser screenshot` or `scrot` it at any point.
+
+```bash
+agent-browser open <url> --headed   # Same commands as always, but rendered visibly
+```
+
+Only add `--headed` when it's useful for the human to watch (demos, debugging a flow together, anything where "show me" beats "tell me"). Default (no `--headed`) is fine for ordinary scraping/automation and is faster.
+
+**Only one browser (headed or headless) can run at a time per daemon.** If a `--headed` open is ignored with `⚠ --headed ignored: daemon already running`, run `agent-browser close` first, then retry.
+
+If `DISPLAY`/`AGENT_BROWSER_EXECUTABLE_PATH` aren't set (no virtual desktop on this host), `--headed` has no visible effect — check `echo $DISPLAY` if unsure.
+
 ## Commands
 
 ### Navigation
