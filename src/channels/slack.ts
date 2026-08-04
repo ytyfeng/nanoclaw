@@ -310,7 +310,11 @@ export class SlackChannel implements Channel {
     }
   }
 
-  async sendFile(jid: string, filePath: string, filename?: string): Promise<void> {
+  async sendFile(
+    jid: string,
+    filePath: string,
+    filename?: string,
+  ): Promise<void> {
     const channelId = jid.replace(/^slack:/, '');
     const name = filename || path.basename(filePath);
     try {
