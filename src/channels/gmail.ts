@@ -421,13 +421,9 @@ export class GmailChannel implements Channel {
 }
 
 registerChannel('gmail', (opts: ChannelOpts) => {
-  const credDir = path.join(os.homedir(), '.gmail-mcp');
-  if (
-    !fs.existsSync(path.join(credDir, 'gcp-oauth.keys.json')) ||
-    !fs.existsSync(path.join(credDir, 'credentials.json'))
-  ) {
-    logger.warn('Gmail: credentials not found in ~/.gmail-mcp/');
-    return null;
-  }
-  return new GmailChannel(opts);
+  // Tool-only mode: credentials stay in ~/.gmail-mcp/ so the mcp__gmail__*
+  // tools inside containers keep working, but the inbox poller (which
+  // auto-delivers new emails as messages into the main group) never starts.
+  logger.debug('Gmail: channel polling disabled (tool-only mode)');
+  return null;
 });
