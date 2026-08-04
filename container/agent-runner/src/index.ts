@@ -472,6 +472,11 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            // Local-runner mode: /workspace isn't a real mount, so
+            // ipc-mcp-stdio.ts needs the real host IPC path passed through.
+            ...(process.env.NANOCLAW_IPC_DIR && {
+              NANOCLAW_IPC_DIR: process.env.NANOCLAW_IPC_DIR,
+            }),
           },
         },
         ollama: {
