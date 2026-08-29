@@ -52,6 +52,7 @@ import {
   formatMessages,
   formatOutbound,
   extractSendFileTags,
+  stripInternalTags,
 } from './router.js';
 import {
   restoreRemoteControl,
@@ -152,6 +153,47 @@ export function _setRegisteredGroups(
 }
 
 /**
+ * Send agent output to a channel, uploading any [SEND_FILE:] attachments.
+ * groupFolder is needed to resolve file paths; without it files can't be
+ * confined to a group, so tags are stripped and only text goes out.
+ */
+async function sendTextAndFiles(
+  channel: Channel,
+  jid: string,
+  rawText: string,
+  groupFolder?: string,
+): Promise<boolean> {
+  const stripped = formatOutbound(rawText);
+  const { cleanText, filePaths } = groupFolder
+    ? extractSendFileTags(stripped, groupFolder)
+    : { cleanText: stripInternalTags(stripped), filePaths: [] };
+
+  let sent = false;
+  if (cleanText) {
+    await channel.sendMessage(jid, cleanText);
+    sent = true;
+  }
+
+  for (const filePath of filePaths) {
+    if (!channel.sendFile) {
+      await channel.sendMessage(
+        jid,
+        `(This channel can't receive file uploads: ${path.basename(filePath)})`,
+      );
+      sent = true;
+      continue;
+    }
+    await channel
+      .sendFile(jid, filePath)
+      .catch((err) =>
+        logger.warn({ jid, filePath, err }, 'Failed to send file'),
+      );
+    sent = true;
+  }
+  return sent;
+}
+
+/**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
  */
@@ -232,32 +274,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           typeof result.result === 'string'
             ? result.result
             : JSON.stringify(result.result);
-        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-        const stripped = raw
-          .replace(/<internal>[\s\S]*?<\/internal>/g, '')
-          .trim();
-        // Extract [SEND_FILE: path] tags and resolve to host paths
-        const { cleanText: text, filePaths } = extractSendFileTags(
-          stripped,
-          group.folder,
-        );
         logger.info(
           { group: group.name },
           `Agent output: ${raw.slice(0, 200)}`,
         );
-        if (text) {
-          await channel.sendMessage(chatJid, text);
+        if (await sendTextAndFiles(channel, chatJid, raw, group.folder)) {
           outputSentToUser = true;
-        }
-        for (const filePath of filePaths) {
-          if (channel.sendFile) {
-            await channel
-              .sendFile(chatJid, filePath)
-              .catch((err) =>
-                logger.warn({ chatJid, filePath, err }, 'Failed to send file'),
-              );
-            outputSentToUser = true;
-          }
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
         resetIdleTimer();
@@ -705,21 +727,20 @@ async function main(): Promise<void> {
     queue,
     onProcess: (groupJid, proc, containerName, groupFolder) =>
       queue.registerProcess(groupJid, proc, containerName, groupFolder),
-    sendMessage: async (jid, rawText) => {
+    sendMessage: async (jid, rawText, groupFolder) => {
       const channel = findChannel(channels, jid);
       if (!channel) {
         logger.warn({ jid }, 'No channel owns JID, cannot send message');
         return;
       }
-      const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text);
+      await sendTextAndFiles(channel, jid, rawText, groupFolder);
     },
   });
   startIpcWatcher({
-    sendMessage: (jid, text) => {
+    sendMessage: async (jid, text, groupFolder) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid, text);
+      await sendTextAndFiles(channel, jid, text, groupFolder);
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
