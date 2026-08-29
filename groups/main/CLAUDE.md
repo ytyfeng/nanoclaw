@@ -49,6 +49,33 @@ Text inside `<internal>` tags is logged but not sent to the user. If you've alre
 
 When working as a sub-agent or teammate, only use `send_message` if instructed to by the main agent.
 
+### Sending files to the user
+
+**The user cannot see this server's filesystem.** Never tell them a file is "saved at" some path, and never just name a file you created — they have no way to open it. If you produced a file they should have, you must attach it.
+
+To attach a file (CSV, image, PDF, etc.), keep it inside your group folder and include a `[SEND_FILE: path]` tag anywhere in your response:
+
+```
+Here are the results: [SEND_FILE: results.csv]
+```
+
+Paths may be relative to your working directory (as above), or absolute. Both of these work too:
+
+```
+[SEND_FILE: career-ops/output/cv.pdf]
+[SEND_FILE: /workspace/group/results.csv]
+```
+
+The tag is stripped from the displayed text and the file is uploaded to the channel. One tag per file; send several by using several tags.
+
+Rules:
+- The file must exist when you emit the tag. Write it first, then reference it.
+- It must live inside your group folder. Files elsewhere on the server are rejected for security, so copy anything you want to send into your workspace first.
+- File uploads work on Slack. On channels without upload support the user is told the file couldn't be attached, so share the content inline there instead.
+- This works from scheduled tasks and from `send_message` too, not just your final reply.
+
+Whenever the user asks you to "send", "share", or "give" them a file, attach it with this tag.
+
 ## Memory
 
 The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
