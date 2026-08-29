@@ -2,6 +2,7 @@ import { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { reapGroupBrowser } from './browser-reaper.js';
 import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
 import { logger } from './logger.js';
 
@@ -222,11 +223,13 @@ export class GroupQueue {
       logger.error({ groupJid, err }, 'Error processing messages for group');
       this.scheduleRetry(groupJid, state);
     } finally {
+      const groupFolder = state.groupFolder;
       state.active = false;
       state.process = null;
       state.containerName = null;
       state.groupFolder = null;
       this.activeCount--;
+      this.reapBrowser(groupJid, groupFolder);
       this.drainGroup(groupJid);
     }
   }
@@ -249,6 +252,7 @@ export class GroupQueue {
     } catch (err) {
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
+      const groupFolder = state.groupFolder;
       state.active = false;
       state.isTaskContainer = false;
       state.runningTaskId = null;
@@ -256,7 +260,26 @@ export class GroupQueue {
       state.containerName = null;
       state.groupFolder = null;
       this.activeCount--;
+      this.reapBrowser(groupJid, groupFolder);
       this.drainGroup(groupJid);
+    }
+  }
+
+  /**
+   * Kill any browser the finished agent left running.
+   *
+   * Skipped when more work is already queued for this group: the next run
+   * starts immediately and would otherwise race the reap. That run's own
+   * finally block reaps once the group actually goes idle.
+   */
+  private reapBrowser(groupJid: string, groupFolder: string | null): void {
+    if (!groupFolder) return;
+    const state = this.getGroup(groupJid);
+    if (state.pendingMessages || state.pendingTasks.length > 0) return;
+    try {
+      reapGroupBrowser(groupFolder);
+    } catch (err) {
+      logger.warn({ groupJid, groupFolder, err }, 'Browser reap failed');
     }
   }
 

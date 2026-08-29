@@ -9,6 +9,7 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
+import { reapAllOrphanedBrowsers } from './browser-reaper.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
@@ -76,6 +77,10 @@ let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+// Groups whose cursor was advanced but whose agent run hasn't finished yet,
+// mapped to the cursor value from before the advance. Persisted so a SIGKILL
+// (OOM, host reboot) can be distinguished from a clean finish on restart.
+let inflightCursors: Record<string, string> = {};
 let messageLoopRunning = false;
 
 const channels: Channel[] = [];
@@ -90,6 +95,13 @@ function loadState(): void {
     logger.warn('Corrupted last_agent_timestamp in DB, resetting');
     lastAgentTimestamp = {};
   }
+  const inflight = getRouterState('inflight_cursors');
+  try {
+    inflightCursors = inflight ? JSON.parse(inflight) : {};
+  } catch {
+    logger.warn('Corrupted inflight_cursors in DB, resetting');
+    inflightCursors = {};
+  }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
   logger.info(
@@ -101,6 +113,7 @@ function loadState(): void {
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+  setRouterState('inflight_cursors', JSON.stringify(inflightCursors));
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -237,6 +250,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const previousCursor = lastAgentTimestamp[chatJid] || '';
   lastAgentTimestamp[chatJid] =
     missedMessages[missedMessages.length - 1].timestamp;
+  // Record the pre-advance cursor so that if this process is SIGKILLed mid-run
+  // (OOM, host reboot) the next startup can roll back and reprocess instead of
+  // silently dropping the message.
+  inflightCursors[chatJid] = previousCursor;
   saveState();
 
   logger.info(
@@ -280,6 +297,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
         if (await sendTextAndFiles(channel, chatJid, raw, group.folder)) {
           outputSentToUser = true;
+          // The user has a response in hand, so a later mid-run kill must not
+          // replay these messages and send a duplicate.
+          if (inflightCursors[chatJid] !== undefined) {
+            delete inflightCursors[chatJid];
+            saveState();
+          }
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
         resetIdleTimer();
@@ -298,6 +321,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
+  // Run finished (success or handled error), so the crash-recovery marker no
+  // longer applies — the branches below own the cursor from here.
+  delete inflightCursors[chatJid];
+
   if (output === 'error' || hadError) {
     // If we already sent output to the user, don't roll back the cursor —
     // the user got their response and re-processing would send duplicates.
@@ -306,6 +333,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         { group: group.name },
         'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
       );
+      saveState();
       return true;
     }
     // Roll back cursor so retries can re-process these messages
@@ -318,6 +346,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return false;
   }
 
+  saveState();
   return true;
 }
 
@@ -510,6 +539,21 @@ async function startMessageLoop(): Promise<void> {
  * Handles crash between advancing lastTimestamp and processing messages.
  */
 function recoverPendingMessages(): void {
+  // Any cursor still marked in-flight belongs to a run that never finished —
+  // the process was SIGKILLed (OOM, host reboot) after the cursor advanced but
+  // before the agent replied. Roll it back so the messages get reprocessed.
+  for (const [chatJid, previousCursor] of Object.entries(inflightCursors)) {
+    const group = registeredGroups[chatJid];
+    if (!group) continue;
+    lastAgentTimestamp[chatJid] = previousCursor;
+    logger.warn(
+      { group: group.name, restoredCursor: previousCursor },
+      'Recovery: rolled back cursor for run interrupted by hard kill',
+    );
+  }
+  inflightCursors = {};
+  saveState();
+
   for (const [chatJid, group] of Object.entries(registeredGroups)) {
     const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
     const pending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
@@ -526,6 +570,10 @@ function recoverPendingMessages(): void {
 function ensureContainerSystemRunning(): void {
   ensureContainerRuntimeRunning();
   cleanupOrphans();
+  // Nothing of ours can be driving a browser yet, so any agent-browser daemon
+  // still alive was orphaned by the previous run (crash, OOM, or an agent that
+  // never called `agent-browser close`).
+  reapAllOrphanedBrowsers('startup');
 }
 
 async function main(): Promise<void> {

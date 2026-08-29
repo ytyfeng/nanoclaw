@@ -35,6 +35,12 @@ Only add `--headed` when it's useful for the human to watch (demos, debugging a 
 
 **Only one browser (headed or headless) can run at a time per daemon.** If a `--headed` open is ignored with `⚠ --headed ignored: daemon already running`, run `agent-browser close` first, then retry.
 
+## Always close when you're done
+
+Run `agent-browser close` once you've finished browsing. The daemon deliberately outlives your agent process, so a browser you leave open keeps running after you exit — a leak of these once filled host memory and OOM-killed NanoClaw mid-reply.
+
+NanoClaw does sweep your group's browser after your run ends (and any strays at startup), so a forgotten close won't accumulate. Don't rely on it: closing yourself frees ~200MB immediately, and on a shared host that headroom matters to whoever runs next.
+
 If `DISPLAY`/`AGENT_BROWSER_EXECUTABLE_PATH` aren't set (no virtual desktop on this host), `--headed` has no visible effect — check `echo $DISPLAY` if unsure.
 
 ## Commands

@@ -31,6 +31,7 @@ import {
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
+import { browserSessionName } from './browser-reaper.js';
 import { detectAuthMode } from './credential-proxy.js';
 import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -406,6 +407,16 @@ function buildLocalEnv(
     // installs without the desktop daemon running. Only meaningful in
     // LOCAL_RUNNER mode — Docker/container mode can't see the host X socket.
     ...getDesktopDisplayEnv(),
+    // Give each group its own agent-browser daemon (default is one shared
+    // "default" session). The daemon deliberately outlives the agent that
+    // spawned it, so without this a reap for one group would kill a browser
+    // another group's concurrent agent is still driving.
+    AGENT_BROWSER_SESSION: browserSessionName(group.folder),
+    // Keep the daemon's runtime dir discoverable by the reaper: systemd gives
+    // the service XDG_RUNTIME_DIR, but HOME above is remapped per group.
+    ...(process.env.XDG_RUNTIME_DIR && {
+      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
+    }),
   };
 
   if (useBedrock) {

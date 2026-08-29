@@ -75,6 +75,16 @@ systemctl --user restart nanoclaw
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp` (or `npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp && npm run build`) to install it. Existing auth credentials and groups are preserved.
 
+## Lost replies / OOM resilience
+
+If a message gets no reply at all, check `dmesg -T | grep -i oom` before anything else. The host is memory-tight and leaked `agent-browser` chromium children (`ps aux | grep -c '[c]hrome'` in the hundreds means an agent skipped `agent-browser close`) can trigger a global OOM.
+
+Leaked browsers are reaped automatically (`src/browser-reaper.ts`): each group gets its own `AGENT_BROWSER_SESSION` daemon, `GroupQueue` reaps that group's browser when the group goes idle, and startup sweeps anything a previous run orphaned. Discovery matches chromium's `--user-data-dir=/tmp/agent-browser-chrome-*` marker, so a browser a human is driving on the virtual desktop is never touched. Agents should still call `agent-browser close` themselves; the reaper is a backstop.
+
+Two further guards exist, both needed:
+- `OOMPolicy=continue` in the systemd drop-in, so the kernel killing a stray chromium doesn't tear down the whole unit. Note that negative `OOMScoreAdjust` is silently ignored in **user** units — verify `/proc/<pid>/oom_score_adj`, not `systemctl show`.
+- `inflight_cursors` in `router_state`: `processGroupMessages` advances the message cursor before the agent replies, so a SIGKILL would otherwise drop the message permanently with no log. The pre-advance cursor is persisted for the duration of the run and rolled back by `recoverPendingMessages()` on the next start. It's cleared as soon as output reaches the user, so a later kill can't cause a duplicate reply.
+
 ## Container Build Cache
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
